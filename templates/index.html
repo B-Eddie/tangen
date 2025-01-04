@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tangen AI</title>
+
+</head>
+<body>
+  <h1>AI Stock Recommender</h1>
+  <div class="container">
+    <label for="companies">Company Names (comma-separated):</label>
+    <input type="text" id="companies" placeholder="e.g., Apple, Tesla, Amazon" />
+
+    <label for="from-date">From Date:</label>
+    <input type="date" id="from-date" />
+
+    <label for="to-date">To Date:</label>
+    <input type="date" id="to-date" />
+
+    <label for="min-confidence">Minimum Confidence Score:</label>
+    <input type="number" id="min-confidence" value="50" min="0" max="100" />
+
+    <button id="get-recommendations">Get Recommendations</button>
+
+    <div class="results" id="results"></div>
+  </div>
+
+  <script>
+    document.getElementById('get-recommendations').addEventListener('click', async () => {
+      const companies = document.getElementById('companies').value.split(',').map(c => c.trim());
+      const minConfidence = parseFloat(document.getElementById('min-confidence').value);
+      const fromDate = document.getElementById('from-date').value;
+      const toDate = document.getElementById('to-date').value;
+
+      if (companies.length === 0 || isNaN(minConfidence) || !fromDate || !toDate) {
+        alert("Please provide valid inputs for all fields!");
+        return;
+      }
+
+      if (new Date(fromDate) > new Date(toDate)) {
+        alert("From Date cannot be after To Date!");
+        return;
+      }
+
+      try {
+        const response = await fetch('http://127.0.0.1:5000/recommend', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            companies: companies,
+            preferences: {
+              min_confidence: minConfidence,
+              from_date: fromDate,
+              to_date: toDate
+            }
+          })
+        });
+
+        const resultsDiv = document.getElementById('results');
+        resultsDiv.innerHTML = "";
+
+        if (!response.ok) {
+          throw new Error("Failed to fetch recommendations");
+        }
+
+        const data = await response.json();
+
+        if (data.length === 0) {
+          resultsDiv.innerHTML = "<p>No recommendations found for the given criteria.</p>";
+        } else {
+          data.forEach(item => {
+            const resultItem = document.createElement('div');
+            resultItem.className = 'result-item';
+            resultItem.innerHTML = `<strong>${item.company}</strong>: Confidence Score - ${item.confidence}`;
+            resultsDiv.appendChild(resultItem);
+          });
+        }
+      } catch (error) {
+        const resultsDiv = document.getElementById('results');
+        resultsDiv.innerHTML = `<p class="error">An error occurred: ${error.message}</p>`;
+      }
+    });
+  </script>
+</body>
+</html>

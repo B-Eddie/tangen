@@ -1,86 +1,100 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Tangen AI</title>
-
-</head>
-<body>
-  <h1>AI Stock Recommender</h1>
-  <div class="container">
-    <label for="companies">Company Names (comma-separated):</label>
-    <input type="text" id="companies" placeholder="e.g., Apple, Tesla, Amazon" />
-
-    <label for="from-date">From Date:</label>
-    <input type="date" id="from-date" />
-
-    <label for="to-date">To Date:</label>
-    <input type="date" id="to-date" />
-
-    <label for="min-confidence">Minimum Confidence Score:</label>
-    <input type="number" id="min-confidence" value="50" min="0" max="100" />
-
-    <button id="get-recommendations">Get Recommendations</button>
-
-    <div class="results" id="results"></div>
-  </div>
-
-  <script>
-    document.getElementById('get-recommendations').addEventListener('click', async () => {
-      const companies = document.getElementById('companies').value.split(',').map(c => c.trim());
-      const minConfidence = parseFloat(document.getElementById('min-confidence').value);
-      const fromDate = document.getElementById('from-date').value;
-      const toDate = document.getElementById('to-date').value;
-
-      if (companies.length === 0 || isNaN(minConfidence) || !fromDate || !toDate) {
-        alert("Please provide valid inputs for all fields!");
-        return;
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tangen AI</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 20px;
+        background-color: #f4f4f9;
       }
-
-      if (new Date(fromDate) > new Date(toDate)) {
-        alert("From Date cannot be after To Date!");
-        return;
+      h1 {
+        color: #333;
+        text-align: center;
       }
-
-      try {
-        const response = await fetch('http://127.0.0.1:5000/recommend', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            companies: companies,
-            preferences: {
-              min_confidence: minConfidence,
-              from_date: fromDate,
-              to_date: toDate
-            }
-          })
-        });
-
-        const resultsDiv = document.getElementById('results');
-        resultsDiv.innerHTML = "";
-
-        if (!response.ok) {
-          throw new Error("Failed to fetch recommendations");
-        }
-
-        const data = await response.json();
-
-        if (data.length === 0) {
-          resultsDiv.innerHTML = "<p>No recommendations found for the given criteria.</p>";
-        } else {
-          data.forEach(item => {
-            const resultItem = document.createElement('div');
-            resultItem.className = 'result-item';
-            resultItem.innerHTML = `<strong>${item.company}</strong>: Confidence Score - ${item.confidence}`;
-            resultsDiv.appendChild(resultItem);
-          });
-        }
-      } catch (error) {
-        const resultsDiv = document.getElementById('results');
-        resultsDiv.innerHTML = `<p class="error">An error occurred: ${error.message}</p>`;
+      .container {
+        max-width: 600px;
+        margin: 0 auto;
+        padding: 20px;
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
       }
-    });
-  </script>
-</body>
+      label {
+        display: block;
+        margin-bottom: 5px;
+        font-weight: bold;
+      }
+      input,
+      select,
+      button {
+        width: 100%;
+        padding: 10px;
+        margin-bottom: 15px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+      }
+      button {
+        background-color: #007bff;
+        color: white;
+        border: none;
+        cursor: pointer;
+      }
+      button:hover {
+        background-color: #0056b3;
+      }
+      .results {
+        margin-top: 20px;
+      }
+      .result-item {
+        padding: 10px;
+        margin-bottom: 10px;
+        background: #e7f3ff;
+        border: 1px solid #007bff;
+        border-radius: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>AI Stock Recommender</h1>
+    <div class="container">
+      <form method="POST">
+        <label for="companies">Companies (comma-separated):</label>
+        <input type="text" id="companies" name="companies" required>
+    
+        <label for="min_confidence">Min Confidence (0-100):</label>
+        <input type="number" id="min_confidence" name="min_confidence" required>
+    
+        <label for="from_date">From Date (YYYY-MM-DD):</label>
+        <input type="date" id="from_date" name="from_date" required>
+    
+        <label for="to_date">To Date (YYYY-MM-DD):</label>
+        <input type="date" id="to_date" name="to_date" required>
+    
+        <label for="investing_horizon">Investing Horizon:</label>
+        <select id="investing_horizon" name="investing_horizon" required>
+            <option value="short-term" selected>Short Term</option>
+            <option value="long-term">Long Term</option>
+        </select>
+    
+        <button type="submit">Get Recommendations</button>
+    </form>
+    
+
+      <div class="results">
+        {% if recommendations %}
+        <h2>Recommendations:</h2>
+        {% for item in recommendations %}
+        <div class="result-item">
+          <strong>{{ item.company }}</strong>: Confidence Score - {{
+          item.confidence }}<br />
+          Total Articles Processed: {{ item.total_articles }}
+        </div>
+        {% endfor %} {% endif %}
+      </div>
+    </div>
+  </body>
 </html>

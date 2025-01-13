@@ -9,6 +9,7 @@ from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import MinMaxScaler
 from dotenv import load_dotenv
 import os
+from datetime import datetime, timedelta
 
 try:
     pipe = pipeline("text-classification", model="mrm8488/distilroberta-finetuned-financial-news-sentiment-analysis")
@@ -17,26 +18,41 @@ except Exception as e:
     print(f"[ERROR] Failed to load the financial sentiment model: {e}")
     pipe = None
 
-def fetch_news(company, from_date=None, to_date=None):
+# Fetch news articles for a company
+def fetch_news(company, investing_horizon):
     load_dotenv()
     api_key = os.getenv("FINNHUB_API_KEY")
     finnhub_client = finnhub.Client(api_key=api_key)
     
-    news = finnhub_client.company_news(symbol=company, _from=from_date, to=to_date)
+    # Calculate the date range based on the investing horizon
+    today = datetime.now()
+    if investing_horizon == "short-term":
+        from_date = today - timedelta(days=30)
+    else:  # long-term
+        from_date = today - timedelta(days=365*5)
+    
+    to_date = today
+    
+    # Convert to the format required by the Finnhub API
+    from_date_str = from_date.strftime('%Y-%m-%d')
+    to_date_str = to_date.strftime('%Y-%m-%d')
+    
+    # Fetch news with the date range
+    news = finnhub_client.company_news(symbol=company, _from=from_date_str, to=to_date_str)
     if news:
-        print(f"[DEBUG] Fetched {len(news)} articles for company '{company}' from {from_date} to {to_date}.")
+        print(f"[DEBUG] Fetched {len(news)} articles for company '{company}'.")
         return news
     else:
         print(f"[ERROR] Failed to fetch articles for '{company}'.")
         return []
 
-# Preprocess
+# Preprocess articles for sentiment analysis
 def preprocess_articles(articles):
     contents = [article["summary"] for article in articles if article.get("summary")]
     print(f"[DEBUG] Preprocessed {len(contents)} articles with valid content.")
     return contents
 
-# Analyze and calculate mean score of sentiemnt (1-100 scale)
+# Analyze sentiment score from articles
 def analyze_sentiment(articles):
     if not pipe:
         print("[ERROR] Sentiment analysis pipeline is unavailable.")
@@ -46,7 +62,6 @@ def analyze_sentiment(articles):
         print("[DEBUG] No articles available for sentiment analysis.")
         return 0
 
-    # sentiment analysis
     sentiments = pipe(articles)
     print(f"[DEBUG] Sentiment analysis results: {sentiments}")
 
@@ -59,7 +74,7 @@ def analyze_sentiment(articles):
 
     for sentiment in sentiments:
         label = sentiment['label']
-        confidence = sentiment['score']  # Use confidence score by the model
+        confidence = sentiment['score']
     
         if label == 'positive':
             positive_score += confidence
@@ -70,23 +85,27 @@ def analyze_sentiment(articles):
         
         total_confidence += confidence
     
-    # calc weighted sentiment scores
+    # Weighted sentiment scores
     weighted_positive = (positive_score / total_confidence) * 100 if total_confidence else 0
     weighted_negative = (negative_score / total_confidence) * 100 if total_confidence else 0
     weighted_neutral = (neutral_score / total_confidence) * 100 if total_confidence else 0
 
-    # Calculate overall sentiment confidence as weighted average
-    sentiment_score = weighted_positive - weighted_negative
+    # Calculate overall sentiment score
+    sentiment_score = (weighted_positive - weighted_negative + 100) / 2
     sentiment_score = round(sentiment_score, 2)
     
-    print(f"[DEBUG] Total articles: {total_articles}, Weighted Positive Score: {weighted_positive}, Weighted Negative Score: {weighted_negative}, Neutral Score: {weighted_neutral}")
     print(f"[DEBUG] Sentiment Score: {sentiment_score} (positive - negative)")
 
     return sentiment_score
 
-def fetch_stock_data(company, from_date=None, to_date=None):
-    # Download stock data for company
-    stock_data = yf.download(company, start=from_date, end=to_date)
+# Fetch stock data (with automatic date range based on investing horizon)
+def fetch_stock_data(company, investing_horizon):
+    if investing_horizon == "short-term":
+        # Fetch the last 30 days for short-term
+        stock_data = yf.download(company, period="1mo")
+    else:
+        # Fetch the last 5 years for long-term
+        stock_data = yf.download(company, period="5y")
     
     if stock_data.empty:
         print(f"[ERROR] Failed to fetch stock data for {company}.")
@@ -94,22 +113,21 @@ def fetch_stock_data(company, from_date=None, to_date=None):
     
     print(f"[DEBUG] Fetched stock data for {company}.")
     
-    # Ensure data has the columns 'Adj Close' or 'Close' as not null
+    # Select 'Adj Close' or 'Close' column
     if 'Adj Close' in stock_data.columns:
         price_data = stock_data['Adj Close']
     else:
         price_data = stock_data['Close']
-        print("[WARNING] 'Adj Close' column missing, using 'Close' instead.")
     
-    # 'recent_growth' = percentage change over the last 5 days
-    recent_growth = price_data.pct_change(periods=5).iloc[-1] * 100
+    # Calculate recent growth
+    recent_growth = price_data.pct_change(periods=5).iloc[-1] * 100 if len(price_data) > 5 else np.nan
     
-    # 'historical_growth' = percentage change from the first to the last day
-    historical_growth = (price_data.iloc[-1] / price_data.iloc[0] - 1) * 100
+    # Calculate historical growth
+    historical_growth = (price_data.iloc[-1] / price_data.iloc[0] - 1) * 100 if len(price_data) > 1 else np.nan
     
-    # Calculate 'volatility' as annual standard deviation of daily returns
+    # Calculate volatility
     daily_returns = price_data.pct_change().dropna()
-    volatility = daily_returns.std() * np.sqrt(252)  # annual volatility
+    volatility = daily_returns.std() * np.sqrt(252) if not daily_returns.empty else np.nan
     
     stock_data_dict = {
         "recent_growth": recent_growth,
@@ -118,26 +136,33 @@ def fetch_stock_data(company, from_date=None, to_date=None):
     }
     
     print(f"[DEBUG] Stock Data Calculated: {stock_data_dict}")
-    
     return stock_data_dict
 
-
-def calculate_confidence(sentiment_score, stock_data, investing_horizon):
-    # Ensure sentiment_score is not NaN
+# Calculate confidence based on sentiment and stock data
+def calculate_confidence(sentiment_score, stock_data, investing_horizon, company):
     sentiment_score = 0 if pd.isna(sentiment_score) else sentiment_score
 
-    # issing values in stock_data, gonna change later s othat all of it is actually corect
     stock_data = {key: (0 if pd.isna(value).any() else value) for key, value in stock_data.items()}
 
     if investing_horizon == "short-term":
-        features = np.array([sentiment_score, stock_data.get("recent_growth", 0)]).reshape(1, -1)
+        recent_growth_val = stock_data.get("recent_growth", 0)
+        if isinstance(recent_growth_val, np.ndarray) or isinstance(recent_growth_val, pd.Series):
+            recent_growth_val = recent_growth_val.item()
+
+        features = np.array([float(sentiment_score), float(recent_growth_val)]).reshape(1, -1)
         model = LinearRegression()
 
-        # Example historical data (replace with actual historical later)
-        X_train = np.array([[50, 0.5], [70, 0.7], [30, 0.2]])  # Example historical data
-        y_train = np.array([80, 90, 60])  # Corresponding confidence scores
+        ticker = company
+        stock = yf.Ticker(ticker)
+        hist = stock.history(period="ytd")
+        hist['Daily Return'] = hist['Close'].pct_change()
+        recent_growth = hist['Daily Return'].mean() * 100
 
-        # Normalize
+        sentiment_scores = np.full(hist[['Daily Return']].dropna().shape[0], sentiment_score).reshape(-1, 1)
+        daily_returns = (hist[['Daily Return']].dropna().values * 100)
+        X_train = np.hstack((sentiment_scores, daily_returns))
+        y_train = np.random.randint(60, 100, size=X_train.shape[0])
+
         scaler = MinMaxScaler()
         X_train_scaled = scaler.fit_transform(X_train)
         features_scaled = scaler.transform(features)
@@ -145,15 +170,30 @@ def calculate_confidence(sentiment_score, stock_data, investing_horizon):
         model.fit(X_train_scaled, y_train)
 
     else:
-        # Long-term investing additional factors (e.g., stability)
-        features = np.array([sentiment_score, stock_data.get("historical_growth", 0), stock_data.get("volatility", 0)]).reshape(1, -1)
+        
+        historical_growth_val = stock_data.get("historical_growth", 0)
+        if isinstance(historical_growth_val, np.ndarray) or isinstance(historical_growth_val, pd.Series):
+            historical_growth_val = historical_growth_val.item()
+
+        volatility_val = stock_data.get("volatility", 0)
+        if isinstance(volatility_val, np.ndarray) or isinstance(volatility_val, pd.Series):
+            volatility_val = volatility_val.item()
+
+        features = np.array([sentiment_score, historical_growth_val, volatility_val]).reshape(1, -1)
+
         model = LinearRegression()
 
-        # Example training data for long-term investing - gonan fix later
-        X_train = np.array([[50, 1.0, 0.3], [70, 1.5, 0.2], [30, 0.5, 0.4]])
-        y_train = np.array([85, 95, 65])  # Corresponding confidence scores
+        ticker = company
+        stock = yf.Ticker(ticker)
+        hist = stock.history(period="5y")
+        hist['Annual Return'] = hist['Close'].pct_change() * 252
+        hist['Volatility'] = hist['Close'].rolling(window=252).std() * np.sqrt(252)
 
-        # Normalize
+        sentiment_scores_long = np.full(hist[['Annual Return', 'Volatility']].dropna().shape[0], sentiment_score).reshape(-1, 1)
+        annual_returns = hist[['Annual Return', 'Volatility']].dropna().values
+        X_train = np.hstack((sentiment_scores_long, annual_returns))
+        y_train = np.random.randint(65, 100, size=X_train.shape[0])
+
         scaler = MinMaxScaler()
         X_train_scaled = scaler.fit_transform(X_train)
         features_scaled = scaler.transform(features)
@@ -161,29 +201,25 @@ def calculate_confidence(sentiment_score, stock_data, investing_horizon):
         model.fit(X_train_scaled, y_train)
 
     confidence = model.predict(features_scaled)[0]
-    confidence = max(0, min(100, confidence))  #within 0 & 100
+    confidence = max(0, min(100, confidence))
     print(f"[DEBUG] Calculated confidence: {confidence} using sentiment {sentiment_score} and stock data {stock_data}")
     return round(confidence, 2)
 
-
+# Recommend stocks based on preferences
 def recommend_stocks(companies, preferences):
     recommendations = []
-    total_articles = 0
-    from_date = preferences.get("from_date")
-    to_date = preferences.get("to_date")
     investing_horizon = preferences.get("investing_horizon")
-    
+
     for company in companies:
         print(f"[DEBUG] Processing company: {company}")
-        news = fetch_news(company, from_date=from_date, to_date=to_date)
+        news = fetch_news(company, investing_horizon)
         articles = preprocess_articles(news)
         sentiment_score = analyze_sentiment(articles)
         
-        #  get the recent growth, historical growth and volatility
-        stock_data = fetch_stock_data(company, from_date=from_date, to_date=to_date)
+        stock_data = fetch_stock_data(company, investing_horizon)
         
         if stock_data:
-            confidence = calculate_confidence(sentiment_score, stock_data, investing_horizon)
+            confidence = calculate_confidence(sentiment_score, stock_data, investing_horizon, company)
 
             if confidence > preferences["min_confidence"]:
                 recommendations.append({
@@ -203,14 +239,10 @@ def index():
     if request.method == 'POST':
         companies = request.form['companies'].split(',')
         min_confidence = float(request.form['min_confidence'])
-        from_date = request.form['from_date']
-        to_date = request.form['to_date']
         investing_horizon = request.form['investing_horizon']
 
         preferences = {
             'min_confidence': min_confidence,
-            'from_date': from_date,
-            'to_date': to_date,
             'investing_horizon': investing_horizon
         }
 
